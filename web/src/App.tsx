@@ -3,7 +3,7 @@ import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { Header } from './components/Header.tsx';
 import { OnThisPage } from './components/OnThisPage.tsx';
 import { Figure1, Overview, Terms } from './components/Overview.tsx';
-import { LimitsSection, MethodSection, SiteFooter, SureSection } from './components/Sections.tsx';
+import { LimitsSection, MethodSection, PrioritySection, SiteFooter, SureSection } from './components/Sections.tsx';
 import { TabbedPanel } from './components/SidePanel.tsx';
 import { AppStateProvider } from './lib/AppState.tsx';
 import { C } from './lib/content.ts';
@@ -73,6 +73,7 @@ export default function App() {
             <Figure1 />
             <Terms />
             <Explorer />
+            <PrioritySection />
             <SureSection />
             <MethodSection />
             <LimitsSection />

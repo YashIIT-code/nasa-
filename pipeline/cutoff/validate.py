@@ -12,6 +12,15 @@ Protocol:
   3. Detection is rerun with those settings, then the HELD-OUT half is scored. A landslide point counts as
      found if a landslide polygon lies within 20 m; a forest point is a false alarm if one does.
   4. Scoring the held-out half again is refused unless --force is given, and every scoring is logged.
+
+Metrics reported for the held-out half (see docs/method.md for what they mean and their caveats):
+  - detection_rate == recall, false_alarm_rate == per-point false-positive rate
+  - precision, F1 and the 2x2 confusion matrix (tp/fp/fn/tn) of the operational (polygon) detection
+  - Wilson 95% intervals for recall and precision (small, valid for small samples)
+  - ROC-AUC and its 95% percentile-bootstrap interval
+  - a precision-recall curve over a fixed set of drop thresholds (needs the per-point scores)
+  The curve and the AUC interval are null when a stored result predates this metric block: they cannot be
+  recovered without the raw per-point scores, and are not invented.
 """
 
 from __future__ import annotations
@@ -19,6 +28,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import math
 import subprocess
 import time
 from dataclasses import dataclass
@@ -44,6 +54,9 @@ DEFAULT_WINDOWS = [0]                                   # 0 = no local-mean corr
 UNLIMITED = 1.0
 LABELS = ("landslide", "forest")
 SIZES = ("small", "medium", "large")
+Z_95 = 1.959963984540054                                # two-sided 95% normal quantile
+BOOTSTRAP_N = 2000                                      # resamples for the AUC interval
+PR_THRESHOLDS_DB = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]     # drop sizes of the precision-recall curve, dB
 
 
 class ValidationError(Exception):
@@ -133,6 +146,62 @@ def auc(scores: np.ndarray, positive: np.ndarray) -> float:
         raise ValidationError("the AUC needs at least one landslide point and one forest point with radar coverage")
     ranks = rankdata(scores)
     return float((ranks[positive].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
+
+
+def wilson_interval(k: int, n: int, z: float = Z_95) -> tuple[float, float]:
+    """Wilson score interval for a proportion k/n. Stays sensible for small n and for k = 0 or k = n,
+    where the simple Wald interval would collapse to a point or leak outside [0, 1]."""
+    if n <= 0:
+        return (0.0, 1.0)
+    p = k / n
+    denom = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = (z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / denom
+    return (max(0.0, centre - half), min(1.0, centre + half))
+
+
+def bootstrap_auc_ci(scores: np.ndarray, positive: np.ndarray, n_resamples: int = BOOTSTRAP_N,
+                     seed: int = SEED, z: float = Z_95) -> tuple[float, float]:
+    """Percentile bootstrap interval for the AUC: resample the points with replacement, keeping the class
+    sizes, and take the 2.5th/97.5th percentiles. Independent of the tune/test split seed."""
+    scores = np.asarray(scores, dtype=float)
+    positive = np.asarray(positive, dtype=bool)
+    pos, neg = scores[positive], scores[~positive]
+    if len(pos) == 0 or len(neg) == 0:
+        raise ValidationError("the AUC interval needs at least one landslide point and one forest point")
+    rng = np.random.default_rng([seed, 7])
+    lo_pct, hi_pct = 100 * (1 - z / (2 * Z_95)) / 2, 100 * (1 + z / (2 * Z_95)) / 2
+    vals = np.empty(n_resamples, dtype=float)
+    n_pos, n_neg = len(pos), len(neg)
+    for i in range(n_resamples):
+        p = pos[rng.integers(0, n_pos, n_pos)]
+        q = neg[rng.integers(0, n_neg, n_neg)]
+        ranks = rankdata(np.r_[p, q])
+        vals[i] = (ranks[:n_pos].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
+    lo, hi = np.percentile(vals, [lo_pct, hi_pct])
+    return float(lo), float(hi)
+
+
+def precision_recall_curve(scores: np.ndarray, positive: np.ndarray,
+                           thresholds: list[float] = PR_THRESHOLDS_DB) -> list[dict]:
+    """Precision and recall for each candidate drop threshold (a point is flagged when its drop is at least
+    the threshold). Uses the same per-point scores as the AUC, so it is a different view of the same evidence,
+    not a second detection run."""
+    scores = np.asarray(scores, dtype=float)
+    positive = np.asarray(positive, dtype=bool)
+    n_pos = int(positive.sum())
+    out = []
+    for t in thresholds:
+        flagged = scores >= t
+        tp = int((flagged & positive).sum())
+        fp = int((flagged & ~positive).sum())
+        out.append({
+            "drop_db": float(t),
+            "flagged": int(flagged.sum()),
+            "precision": round(tp / (tp + fp), 4) if (tp + fp) else 1.0,
+            "recall": round(tp / n_pos, 4) if n_pos else 0.0,
+        })
+    return out
 
 
 def project_points(points: list[CheckPoint], crs) -> np.ndarray:
@@ -328,7 +397,8 @@ def landslide_polygons(path: Path, crs) -> list:
 
 
 def score_test(test: list[CheckPoint], polygons: list, inputs: TuneInputs, highpass_px: int, threshold_db: float) -> dict:
-    """The held-out numbers: detection rate, false-alarm rate, AUC and detection by size."""
+    """The held-out numbers: the operating point (recall, precision, F1, confusion matrix), the ROC-AUC with
+    its interval, the precision-recall curve and the detection rate by landslide size."""
     xy = project_points(test, inputs.crs)
     is_land = np.array([p.label == "landslide" for p in test])
     found = found_within(xy, polygons)
@@ -337,10 +407,18 @@ def score_test(test: list[CheckPoint], polygons: list, inputs: TuneInputs, highp
         raise ValidationError("the held-out half needs at least one landslide point and one forest point")
     detection = float(found[is_land].mean())
     false_alarm = float(found[~is_land].mean())
+    tp = int(found[is_land].sum())
+    fp = int(found[~is_land].sum())
+    fn, tn = n_land - tp, n_forest - fp
+    precision = tp / (tp + fp) if (tp + fp) else None
+    recall = tp / n_land
+    f1 = (2 * precision * recall / (precision + recall)) if precision and (precision + recall) else None
     adjusted = [_adjusted(p, highpass_px) for p in inputs.passes]
     scores = point_scores(adjusted, xy, inputs.transform)
     covered = np.isfinite(scores)
     value = auc(scores[covered], is_land[covered])
+    auc_lo, auc_hi = bootstrap_auc_ci(scores[covered], is_land[covered])
+    curve = precision_recall_curve(scores[covered], is_land[covered])
     first = point_scores(adjusted[:1], xy, inputs.transform)                    # the primary pair alone, as a comparison
     ok1 = np.isfinite(first)
     single = auc(first[ok1], is_land[ok1])
@@ -353,6 +431,13 @@ def score_test(test: list[CheckPoint], polygons: list, inputs: TuneInputs, highp
         "split": "test", "n_test_landslide": n_land, "n_test_forest": n_forest,
         "detection_rate": round(detection, 4), "false_alarm_rate": round(false_alarm, 4), "auc": round(value, 4),
         "threshold_db": float(threshold_db), "by_size": by_size,
+        "recall": round(recall, 4), "precision": None if precision is None else round(precision, 4),
+        "f1": None if f1 is None else round(f1, 4),
+        "confusion": {"tp": tp, "fp": fp, "fn": fn, "tn": tn},
+        "recall_ci_95": [round(x, 4) for x in wilson_interval(tp, n_land)],
+        "precision_ci_95": None if precision is None else [round(x, 4) for x in wilson_interval(tp, tp + fp)],
+        "auc_ci_95": [round(auc_lo, 4), round(auc_hi, 4)],
+        "precision_recall_curve": curve,
         "points_without_radar_coverage": int((~covered).sum()), "auc_primary_pair_only": round(single, 4),
     }
 

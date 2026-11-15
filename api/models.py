@@ -14,6 +14,8 @@ PairId = Literal["t141d", "t4a", "t40d", "t76a"]
 Direction = Literal["ascending", "descending"]
 Confidence = Literal["high", "medium", "low"]
 RoadStatus = Literal["blocked", "at_risk", "clear", "unknown"]
+RoadImpact = Literal["high_priority", "potentially_affected", "low_confidence", "no_evidence", "unknown"]
+AlternativeRoute = Literal["yes", "no", "unknown"]
 CommunityStatus = Literal["cut_off", "reachable", "unknown"]
 
 
@@ -134,6 +136,9 @@ class RoadProps(Strict):
     status: RoadStatus
     min_distance_m: float | None
     landslide_ids: str
+    impact: RoadImpact
+    evidence: str
+    scenarios: str
 
 
 class CommunityProps(Strict):
@@ -144,6 +149,9 @@ class CommunityProps(Strict):
     status: CommunityStatus
     nearest_hub: str | None
     reason: str
+    confidence: Confidence
+    alternative_route: AlternativeRoute
+    crossing: str
 
 
 Landslides = FeatureCollection[AreaGeometry, LandslideProps]
@@ -160,6 +168,22 @@ class SizeDetection(Strict):
     detection_rate: float
 
 
+class Confusion(Strict):
+    """2x2 table of the held-out points at the operating point (per-point, polygon within 20 m)."""
+    tp: int
+    fp: int
+    fn: int
+    tn: int
+
+
+class CurvePoint(Strict):
+    """One point of the precision-recall curve: the drop threshold and the precision/recall it gives."""
+    drop_db: float
+    flagged: int
+    precision: float
+    recall: float
+
+
 class Validation(Strict):
     split: Literal["test"]
     n_test_landslide: int
@@ -169,6 +193,14 @@ class Validation(Strict):
     auc: float
     threshold_db: float
     by_size: list[SizeDetection]
+    recall: float
+    precision: float | None
+    f1: float | None
+    confusion: Confusion
+    recall_ci_95: tuple[float, float]
+    precision_ci_95: tuple[float, float] | None
+    auc_ci_95: tuple[float, float] | None
+    precision_recall_curve: list[CurvePoint] | None
 
 
 class StatsParams(Strict):

@@ -31,9 +31,27 @@ TWICE_NOTE = ("The held-out half was scored twice: first on the original method,
 def _score_line(v: dict, label: str) -> str:
     by_size = ", ".join(f"{b['size']} {_pct(b['detection_rate'])}% (n = {b['n']})" if b["n"] >= MIN_N_TO_SCORE
                         else f"{b['size']}: n = {b['n']}, too few to score" for b in v["by_size"])
-    return (f"- {label} ({v['n_test_landslide']} landslide points, {v['n_test_forest']} forest points): found "
-            f"**{_pct(v['detection_rate'])}%**, false alarms **{_pct(v['false_alarm_rate'])}%**, AUC **{v['auc']:.2f}** "
-            f"(0.5 = guessing, 1.0 = perfect)." + (f" Found by landslide size: {by_size}." if by_size else ""))
+    line = (f"- {label} ({v['n_test_landslide']} landslide points, {v['n_test_forest']} forest points): found "
+            f"**{_pct(v['detection_rate'])}%** (recall), false alarms **{_pct(v['false_alarm_rate'])}%**, "
+            f"AUC **{v['auc']:.2f}** (0.5 = guessing, 1.0 = perfect)")
+    extra = []
+    if v.get("precision") is not None:
+        extra.append(f"precision {_pct(v['precision'])}%")
+    if v.get("f1") is not None:
+        extra.append(f"F1 {v['f1']:.2f}")
+    if extra:
+        line += ", " + ", ".join(extra)
+    line += "."
+    c = v.get("confusion")
+    if c:
+        line += (f" Confusion matrix on the held-out points: {c['tp']} found, {c['fn']} missed, "
+                 f"{c['fp']} forest flagged, {c['tn']} forest left clear.")
+    ci = v.get("recall_ci_95")
+    if ci:
+        line += f" 95% interval for recall {_pct(ci[0])}–{_pct(ci[1])}%."
+    if by_size:
+        line += f" Found by landslide size: {by_size}."
+    return line
 
 
 def community_counts(communities: dict | None) -> dict | None:

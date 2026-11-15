@@ -17,7 +17,9 @@ from shapely.geometry import LineString, Polygon
 from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 
+from .access import AccessParams, SCENARIOS, SCENARIO_CONFIDENCE, _evidence, _impact
 from .export import default_timeline, pair_entry, png_change, png_hv, write_json
+from .validate import wilson_interval
 
 SEED = 2026
 LON0, LAT0 = -80.87, 7.48            # centre of the mock landslide cluster
@@ -136,30 +138,42 @@ def _road_lines(landslides: list[dict]) -> list[tuple[str, str, list[tuple[float
 
 
 def _roads(landslides: list[dict], unknown: list[dict]) -> list[dict]:
-    ls = [(f["properties"]["id"], orient(Polygon(_metres(f["geometry"]["coordinates"][0])), 1.0)) for f in landslides]
+    ls = [(f["properties"]["id"], orient(Polygon(_metres(f["geometry"]["coordinates"][0])), 1.0),
+           f["properties"]) for f in landslides]
     unk = unary_union([Polygon(_metres(f["geometry"]["coordinates"][0])) for f in unknown])
+    params = AccessParams()
     feats = []
     for name, highway, pts in _road_lines(landslides):
         coords = [[r6(x), r6(y)] for x, y in pts]
         line = LineString(_metres(coords))
-        dists = [(lid, line.distance(p)) for lid, p in ls]
-        dmin = min(d for _, d in dists)
-        near_ids = ",".join(lid for lid, d in dists if d <= 100)
+        dists = [(lid, line.distance(p), props) for lid, p, props in ls]
+        dmin = min(d for _, d, _ in dists)
+        near_ids = ",".join(lid for lid, d, _ in dists if d <= 100)
         unknown_share = line.intersection(unk).length / line.length if line.length else 0.0
+        unseen = unknown_share >= 0.5
         if dmin <= 10:
             status = "blocked"
         elif dmin <= 100:
             status = "at_risk"
-        elif unknown_share >= 0.5:
+        elif unseen:
             status = "unknown"
         else:
             status = "clear"
+        # the confidence-aware impact reuses the real access helpers, so mock output follows the same rules
+        near = sorted((t for t in dists if t[1] <= params.at_risk_m), key=lambda t: t[1])
+        n_conf, n_id, n_area = (near[0][2]["confidence"], near[0][0], near[0][2]["area_m2"]) if near else (None, None, None)
+        near_d = round(dmin, 1)
+        impact = _impact(dmin, n_conf, unseen, params)
+        scenarios = ",".join(s for s in SCENARIOS
+                             if any(props["confidence"] in SCENARIO_CONFIDENCE[s] for _, d, props in dists if d <= 100))
         feats.append({
             "type": "Feature",
             "geometry": {"type": "LineString", "coordinates": coords},
             "properties": {
                 "osm_id": None, "name": name, "highway": highway, "status": status,
-                "min_distance_m": round(dmin, 1), "landslide_ids": near_ids,
+                "min_distance_m": near_d, "landslide_ids": near_ids,
+                "impact": impact, "evidence": _evidence(impact, n_id, n_conf, n_area, near_d, params),
+                "scenarios": scenarios,
             },
             "_length_m": line.length,         # removed before writing
         })
@@ -170,12 +184,12 @@ def _communities(roads: list[dict]) -> list[dict]:
     by_name = {f["properties"]["name"]: f for f in roads}
     end1 = by_name["Mock Road 1"]["geometry"]["coordinates"][-1]
     rows = [
-        ("Mock Village A", "village", 150, "cut_off", "Tonosí", [end1[0] + 0.004, end1[1] + 0.002]),
-        ("Mock Village B", "village", None, "reachable", "Macaracas", [-80.50, 7.45]),
-        ("Mock Town C", "town", 2400, "reachable", "Chitré", [-80.45, 7.74]),
-        ("Mock Hamlet D", "hamlet", None, "unknown", None, [-80.78, 7.636]),
-        ("Mock Village E", "village", 80, "cut_off", "Santiago", [-80.885, 7.72]),
-        ("Mock Village F", "village", None, "unknown", None, [-80.60, 7.38]),
+        ("Mock Village A", "village", 150, "cut_off", "Tonosí", "low", "no", "Mock Road 1", [end1[0] + 0.004, end1[1] + 0.002]),
+        ("Mock Village B", "village", None, "reachable", "Macaracas", "medium", "yes", "", [-80.50, 7.45]),
+        ("Mock Town C", "town", 2400, "reachable", "Chitré", "high", "yes", "", [-80.45, 7.74]),
+        ("Mock Hamlet D", "hamlet", None, "unknown", None, "low", "unknown", "", [-80.78, 7.636]),
+        ("Mock Village E", "village", 80, "cut_off", "Santiago", "low", "no", "Mock Road 5", [-80.885, 7.72]),
+        ("Mock Village F", "village", None, "unknown", None, "low", "unknown", "", [-80.60, 7.38]),
     ]
     reasons = {
         "cut_off": "Mock data: every mapped road to {hub} crosses a likely-blocked stretch.",
@@ -183,13 +197,14 @@ def _communities(roads: list[dict]) -> list[dict]:
         "unknown": "Mock data: no usable mapped road nearby, so access is unknown.",
     }
     feats = []
-    for name, place, pop, status, hub, (lon, lat) in rows:
+    for name, place, pop, status, hub, conf, alt, crossing, (lon, lat) in rows:
         feats.append({
             "type": "Feature",
             "geometry": {"type": "Point", "coordinates": [r6(lon), r6(lat)]},
             "properties": {
                 "osm_id": None, "name": name, "place": place, "population": pop, "status": status,
                 "nearest_hub": hub, "reason": reasons[status].format(hub=hub),
+                "confidence": conf, "alternative_route": alt, "crossing": crossing,
             },
         })
     return feats
@@ -247,6 +262,33 @@ def _images(out: Path, pairs: list[dict], landslides: list[dict], bbox: list[flo
     return written
 
 
+def _mock_validation() -> dict:
+    """A self-consistent (but entirely made-up) held-out score block: counts, the metrics derived from them,
+    and a plausible precision-recall curve. Marked mock everywhere it appears."""
+    tp, fp, fn, tn = 39, 6, 11, 44
+    n_land, n_forest = tp + fn, fp + tn
+    recall = tp / n_land
+    precision = tp / (tp + fp)
+    return {
+        "split": "test", "n_test_landslide": n_land, "n_test_forest": n_forest,
+        "detection_rate": round(recall, 4), "false_alarm_rate": round(fp / n_forest, 4), "auc": 0.86,
+        "threshold_db": -3.5,
+        "by_size": [{"size": "small", "n": 14, "detection_rate": 0.45},
+                    {"size": "medium", "n": 24, "detection_rate": 0.8},
+                    {"size": "large", "n": 12, "detection_rate": 0.95}],
+        "recall": round(recall, 4), "precision": round(precision, 4),
+        "f1": round(2 * precision * recall / (precision + recall), 4),
+        "confusion": {"tp": tp, "fp": fp, "fn": fn, "tn": tn},
+        "recall_ci_95": [round(x, 4) for x in wilson_interval(tp, n_land)],
+        "precision_ci_95": [round(x, 4) for x in wilson_interval(tp, tp + fp)],
+        "auc_ci_95": [0.78, 0.93],
+        "precision_recall_curve": [{"drop_db": d, "flagged": f, "precision": p, "recall": r} for d, f, p, r in
+                                   [(1.0, 63, 0.79, 1.0), (2.0, 52, 0.85, 0.88), (2.5, 45, 0.87, 0.78),
+                                    (3.0, 38, 0.89, 0.68), (3.5, 31, 0.9, 0.56), (4.0, 24, 0.92, 0.44),
+                                    (5.0, 15, 0.93, 0.28), (6.0, 7, 1.0, 0.14)]],
+    }
+
+
 def write_mock(cfg: dict, out: str | Path) -> list[str]:
     """Write every output file with mock data into `out`. Returns the file names written."""
     out = Path(out)
@@ -285,13 +327,7 @@ def write_mock(cfg: dict, out: str | Path) -> list[str]:
         "area_km2": round(sum(f["properties"]["area_m2"] for f in landslides) / 1e6, 3),
         "roads_blocked_km": round(blocked_km, 2),
         "communities_cut_off": sum(1 for f in communities if f["properties"]["status"] == "cut_off"),
-        "validation": {
-            "split": "test", "n_test_landslide": 50, "n_test_forest": 50,
-            "detection_rate": 0.78, "false_alarm_rate": 0.12, "auc": 0.86, "threshold_db": -3.5,
-            "by_size": [{"size": "small", "n": 14, "detection_rate": 0.45},
-                        {"size": "medium", "n": 24, "detection_rate": 0.8},
-                        {"size": "large", "n": 12, "detection_rate": 0.95}],
-        },
+        "validation": _mock_validation(),
         "validation_original": None,
         "baseline_no_change_flag_rate": 0.004,
         "post_event_flag_rate": 0.031,

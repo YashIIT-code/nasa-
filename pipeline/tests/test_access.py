@@ -14,7 +14,7 @@ from cutoff.access import (AccessError, AccessParams, Hub, Place, Way, assess_co
 from cutoff.contract import check_dir
 
 P = AccessParams()
-SLIDE = [("L0001", box(0, 0, 20, 20))]
+SLIDE = [("L0001", box(0, 0, 20, 20), {"confidence": "high", "area_m2": 400.0})]
 
 
 def way(coords, name="r", highway="tertiary", osm_id="1"):
@@ -66,7 +66,7 @@ def test_long_roads_are_cut_so_one_landslide_does_not_block_a_whole_road():
     long_road = way([(0, 5000), (10_000, 5000)])
     pieces = split_ways([long_road], 500)
     assert len(pieces) == 20 and all(abs(p.line.length - 500) < 1e-6 for p in pieces)
-    classify_pieces(pieces, [("L1", box(4900, 4990, 5100, 5010))], [], P)
+    classify_pieces(pieces, [("L1", box(4900, 4990, 5100, 5010), {})], [], P)
     statuses = [p.status for p in pieces]
     assert statuses.count("blocked") == 2 and statuses[0] == "clear" and statuses[-1] == "clear"
 
@@ -77,13 +77,40 @@ def test_neighbouring_pieces_with_one_status_are_joined(monkeypatch):
     x0, y0 = to_metric.transform(-80.9, 7.5)
     w = way([(x0, y0), (x0 + 4000, y0)])
     pieces = split_ways([w], 500)
-    classify_pieces(pieces, [("L1", box(x0 + 1990, y0 - 5, x0 + 2010, y0 + 5))], [], P)
+    classify_pieces(pieces, [("L1", box(x0 + 1990, y0 - 5, x0 + 2010, y0 + 5), {})], [], P)
     feats = merge_runs([w], pieces)
     assert [f["properties"]["status"] for f in feats] == ["clear", "blocked", "clear"]
     blocked = feats[1]
     assert blocked["properties"]["landslide_ids"] == "L1" and blocked["properties"]["min_distance_m"] <= 10
     assert blocked["geometry"]["coordinates"][0][0] == pytest.approx(-80.9 + 1500 / 110_300, abs=2e-4)
     assert all(round(c, 6) == c for f in feats for xy in f["geometry"]["coordinates"] for c in xy)
+
+
+# ---- confidence-aware impact ----
+
+def test_road_impact_folds_in_the_candidate_confidence():
+    touching = box(0, 0, 20, 20)
+    hi = [("H", touching, {"confidence": "high", "area_m2": 400.0})]
+    med = [("M", touching, {"confidence": "medium", "area_m2": 400.0})]
+    low = [("L", touching, {"confidence": "low", "area_m2": 400.0})]
+    assert status_of([(-50, 10), (70, 10)], landslides=hi).impact == "high_priority"
+    assert status_of([(-50, 10), (70, 10)], landslides=med).impact == "potentially_affected"
+    assert status_of([(-50, 10), (70, 10)], landslides=low).impact == "low_confidence"
+    assert status_of([(-50, 70), (70, 70)], landslides=hi).impact == "potentially_affected"   # high, within at_risk, not touching
+    assert status_of([(-50, 70), (70, 70)], landslides=med).impact == "low_confidence"       # medium, not touching
+    assert status_of([(-50, 520), (70, 520)], landslides=hi).impact == "no_evidence"
+    assert status_of([(-50, 520), (70, 520)], landslides=[]).impact == "no_evidence"
+    unseen = [box(-1000, 495, 1000, 505)]
+    assert status_of([(-50, 500), (50, 500)], landslides=[], unknown=unseen).impact == "unknown"
+
+
+def test_road_scenarios_narrow_as_confidence_drops_and_evidence_names_the_candidate():
+    hi = status_of([(-50, 10), (70, 10)], landslides=[("H", box(0, 0, 20, 20), {"confidence": "high", "area_m2": 400.0})])
+    assert hi.scenarios == ("strict", "balanced", "broad") and "H" in hi.evidence and "400" in hi.evidence
+    med = status_of([(-50, 10), (70, 10)], landslides=[("M", box(0, 0, 20, 20), {"confidence": "medium"})])
+    assert med.scenarios == ("balanced", "broad") and "M" in med.evidence
+    low = status_of([(-50, 10), (70, 10)], landslides=[("L", box(0, 0, 20, 20), {"confidence": "low"})])
+    assert low.scenarios == ("broad",)
 
 
 # ---- community access ----
@@ -94,7 +121,7 @@ def network(blocked_at=None, second_road=False):
     if second_road:
         ways.append(way([(0, 0), (0, 800), (3000, 800), (3000, 0)], osm_id="bypass"))
     pieces = split_ways(ways, 500)
-    landslides = [("L1", box(blocked_at - 10, -10, blocked_at + 10, 10))] if blocked_at is not None else []
+    landslides = [("L1", box(blocked_at - 10, -10, blocked_at + 10, 10), {"confidence": "high"})] if blocked_at is not None else []
     classify_pieces(pieces, landslides, [], P)
     return ways, pieces
 
@@ -110,6 +137,21 @@ def test_a_village_whose_only_road_is_blocked_is_cut_off():
     results, _ = assess(*network(blocked_at=1500))
     r = results[0]
     assert r.status == "cut_off" and r.nearest_hub == "Town" and "likely-blocked" in r.reason
+    # the community carries the evidence behind the status: no alternative route, and the crossing road is named
+    assert r.alternative_route == "no" and r.confidence == "high" and r.crossing == "r"
+
+
+def test_a_reachable_community_has_an_alternative_route_and_no_crossing():
+    results, _ = assess(*network(second_road=True))
+    r = results[0]
+    assert r.status == "reachable" and r.alternative_route == "yes" and r.crossing == ""
+    assert r.confidence == "medium"                    # only one town still reachable on its open component
+
+
+def test_an_unknown_community_reports_an_unknown_alternative_route():
+    ways, pieces = network(blocked_at=1500)
+    results, _ = assess(ways, pieces, places=[Place(None, "Remote", "hamlet", None, (0.0, 5000.0))])
+    assert results[0].status == "unknown" and results[0].alternative_route == "unknown" and results[0].crossing == ""
 
 
 def test_with_a_second_open_road_it_is_reachable():
@@ -145,7 +187,7 @@ def test_roads_that_do_not_reach_a_town_are_a_map_gap_not_a_blockage():
 def test_the_nearest_reachable_town_is_named_and_unusable_towns_are_reported():
     ways = [way([(0, 0), (2000, 0), (6000, 0)])]
     pieces = split_ways(ways, 500)
-    classify_pieces(pieces, [("L", box(1990, -10, 2010, 10))], [], P)       # blocks the way to the near town only
+    classify_pieces(pieces, [("L", box(1990, -10, 2010, 10), {})], [], P)       # blocks the way to the near town only
     hubs = [Hub("Near", (3000.0, 0.0)), Hub("Far", (6000.0, 0.0)), Hub("Offmap", (0.0, 50_000.0))]
     results, skipped = assess(ways, pieces, hubs=hubs)
     assert results[0].status == "cut_off" and skipped == ["Offmap"]         # both towns lie beyond the blocked stretch

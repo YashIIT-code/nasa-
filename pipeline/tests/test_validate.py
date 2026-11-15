@@ -11,8 +11,9 @@ import synth_validate
 from cutoff.__main__ import main
 from cutoff.contract import check_dir
 from cutoff.run import run
-from cutoff.validate import (THRESHOLDS, CheckPoint, ValidationError, auc, choose_setting, found_within, load_points,
-                             points_are_committed, restore_validation, run_validation, split_points)
+from cutoff.validate import (THRESHOLDS, CheckPoint, ValidationError, auc, bootstrap_auc_ci, choose_setting,
+                             found_within, load_points, points_are_committed, precision_recall_curve,
+                             restore_validation, run_validation, split_points, wilson_interval)
 
 
 # ---- pure pieces ----
@@ -49,6 +50,38 @@ def test_auc_values():
 def test_auc_needs_both_classes():
     with pytest.raises(ValidationError):
         auc(np.array([1.0, 2.0]), np.array([True, True]))
+
+
+def test_wilson_interval_stays_inside_zero_to_one():
+    lo, hi = wilson_interval(5, 10)
+    assert lo < 0.5 < hi and abs((lo + hi) / 2 - 0.5) < 1e-9                     # symmetric about the point estimate
+    assert wilson_interval(0, 10)[0] == 0.0 and wilson_interval(0, 10)[1] > 0.0  # a zero count is not a point estimate
+    assert wilson_interval(10, 10)[1] == pytest.approx(1.0) and wilson_interval(10, 10)[0] < 1.0
+    assert wilson_interval(5, 0) == (0.0, 1.0)                                   # no points: admit we know nothing
+    narrow, wide = wilson_interval(50, 100), wilson_interval(5, 10)              # more data tightens the interval
+    assert (narrow[1] - narrow[0]) < (wide[1] - wide[0])
+
+
+def test_bootstrap_auc_interval_is_deterministic_and_brackets_the_estimate():
+    scores = np.array([9, 8, 7, 6, 5, 4, 3, 2, 1.0])
+    labels = np.array([True, True, True, True, True, False, False, False, False])
+    lo, hi = bootstrap_auc_ci(scores, labels, n_resamples=200)
+    assert (lo, hi) == bootstrap_auc_ci(scores, labels, n_resamples=200)         # same seed, same interval
+    assert lo <= auc(scores, labels) <= hi
+    perfect = bootstrap_auc_ci(np.array([9.0, 1.0]), np.array([True, False]), n_resamples=50)
+    assert perfect == (1.0, 1.0)                                                 # a perfect split cannot be resampled worse
+
+
+def test_precision_recall_curve_recall_never_falls_as_the_threshold_relaxes():
+    scores = np.array([6.0, 4.0, 2.0, 0.5, 1.0, 3.0])
+    labels = np.array([True, True, True, False, False, False])
+    curve = precision_recall_curve(scores, labels, thresholds=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    assert [p["drop_db"] for p in curve] == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    recalls = [p["recall"] for p in curve]
+    assert recalls == sorted(recalls, reverse=True)                              # a higher bar flags no more true positives
+    assert curve[0]["recall"] == 1.0 and curve[0]["precision"] == pytest.approx(0.6)
+    assert curve[-1]["recall"] == pytest.approx(1 / 3, abs=1e-4) and curve[-1]["precision"] == 1.0
+    assert all(0.0 <= p["precision"] <= 1.0 and 0.0 <= p["recall"] <= 1.0 for p in curve)
 
 
 def test_found_within_uses_the_tolerance():

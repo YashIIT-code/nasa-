@@ -83,6 +83,31 @@ The validation set is 183 check points from Sentinel-2 L2A NDVI change (8/22 Sep
 
 **Roads and communities (revised method):** 92.2 km of road likely blocked and 102 of 460 mapped places possibly cut off (337 reachable, 21 unknown). With the original method the figures were 46.1 km and 7 communities. These counts rise and fall with how many candidates are flagged, so they say more about the threshold than about the roads.
 
+## Roads, communities and inspection priorities
+
+On top of the geometric road `status` (likely blocked within 10 m, at risk within 100 m, unknown where the radar could not see, otherwise clear), every road piece carries a **confidence-aware impact** so that a single-pass detection is not shown the same as a candidate seen in several passes. The nearest candidate and its confidence decide the category:
+
+| Impact | Meaning |
+|---|---|
+| `high_priority` | a high-confidence candidate touches the road (within 10 m) |
+| `potentially_affected` | a medium-confidence candidate touches it, or a high-confidence one is within 100 m |
+| `low_confidence` | only a medium- or low-confidence candidate is nearby |
+| `no_evidence` | no candidate within 100 m and the radar could see the piece |
+| `unknown` | no candidate within 100 m but more than half of the piece was not seen |
+
+Each piece also records the sensitivity **scenarios** it counts as affected in: `strict` (high-confidence candidates only), `balanced` (high and medium) and `broad` (every candidate). The `evidence` string is the sentence the app shows, naming the candidate and the distance the classification rests on.
+
+Every community carries a **confidence** for its status (from the blocking candidates and the number of independent routes), an **alternative_route** flag (`yes`/`no`/`unknown`: does an open route to a town survive once the likely-blocked pieces are removed?), and, when it is cut off, the **crossing** road(s) that separate it from a town. The wording is always "likely blocked" and "possibly cut off": nobody saw the blockage.
+
+**Inspection priorities (website).** The site orders road stretches and communities into a worklist with a 0–100 score. The score is a weighted mean of three factors, each on a 0–1 scale, with plain weights that anyone can change:
+
+- roads: candidate evidence (the impact above, weight 0.6), road class (weight 0.25) and stretch length (weight 0.15);
+- communities: evidence (its confidence, weight 0.3), importance (being cut off, weight 0.45) and population affected (weight 0.25).
+
+Reachable communities and stretches with no candidate nearby are left out, because there is nothing to inspect. Every item lists the reasons it scored what it did. **The score orders a worklist; it is not a probability** that a road is blocked or a community is cut off, and it is not a prediction.
+
+Alongside the detection rate, false-alarm rate and AUC above, `stats.json` now stores the standard metric set for the held-out half: precision, recall, F1, the full 2x2 confusion table, Wilson 95% intervals for the rates, a percentile-bootstrap 95% interval for the AUC, and the precision-recall curve. With only a few dozen points of each kind the intervals are wide, so the point estimates are read with care.
+
 ## What was tried
 Every setting below was scored on the **tuning half only**. The held-out half was not read while any of these were tried. The tables show the ones that did not help as well as the one that was kept.
 

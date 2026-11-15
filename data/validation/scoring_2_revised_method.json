@@ -18,6 +18,25 @@
       "detection_rate": 0.4815
     }
   ],
+  "recall": 0.3333,
+  "precision": 1.0,
+  "f1": 0.5,
+  "confusion": {
+    "tp": 19,
+    "fp": 0,
+    "fn": 38,
+    "tn": 34
+  },
+  "recall_ci_95": [
+    0.2249,
+    0.4628
+  ],
+  "precision_ci_95": [
+    0.8318,
+    1.0
+  ],
+  "auc_ci_95": null,
+  "precision_recall_curve": null,
   "points_without_radar_coverage": 0,
   "auc_primary_pair_only": 0.7064
 }

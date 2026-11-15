@@ -18,6 +18,9 @@ PAIR_IDS = ("t141d", "t4a", "t40d", "t76a")
 DIRECTIONS = ("ascending", "descending")
 CONFIDENCES = ("high", "medium", "low")
 ROAD_STATUSES = ("blocked", "at_risk", "clear", "unknown")
+IMPACTS = ("high_priority", "potentially_affected", "low_confidence", "no_evidence", "unknown")
+SCENARIOS = ("strict", "balanced", "broad")
+ALTERNATIVE_ROUTES = ("yes", "no", "unknown")
 COMMUNITY_STATUSES = ("cut_off", "reachable", "unknown")
 ISO_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 LANDSLIDE_ID = re.compile(r"^L\d{4,}$")
@@ -152,20 +155,44 @@ LANDSLIDE = {
 ROAD = {
     "osm_id": is_str_or_null, "name": is_str_or_null, "highway": is_str_or_null,
     "status": one_of(*ROAD_STATUSES), "min_distance_m": is_num_or_null, "landslide_ids": is_str,
+    "impact": one_of(*IMPACTS), "evidence": is_str, "scenarios": is_str,
 }
 COMMUNITY = {
     "osm_id": is_str_or_null, "name": is_str, "place": is_str, "population": is_int_or_null,
     "status": one_of(*COMMUNITY_STATUSES), "nearest_hub": is_str_or_null, "reason": is_str,
+    "confidence": one_of(*CONFIDENCES), "alternative_route": one_of(*ALTERNATIVE_ROUTES), "crossing": is_str,
 }
 OPTICAL = {"before_webp": is_str, "after_webp": is_str, "bounds": is_bounds, "before_caption": is_str,
            "after_caption": is_str, "attribution": is_str}
 STATS_PARAMS = {"threshold_db": is_num, "min_slope_deg": is_num, "min_forest_hv_db": is_num, "min_pixels": is_int,
                 "highpass_px": is_int}
 STATS_BY_SIZE = {"size": one_of("small", "medium", "large"), "n": is_int, "detection_rate": is_num}
+STATS_CONFUSION = {"tp": is_int, "fp": is_int, "fn": is_int, "tn": is_int}
+STATS_PR_POINT = {"drop_db": is_num, "flagged": is_int, "precision": is_num, "recall": is_num}
+
+
+def _ci_or_null(v: Any) -> str | None:
+    """[low, high] with 0 <= low <= high <= 1, or null (the interval needs the raw per-point scores)."""
+    if v is None:
+        return None
+    if not (isinstance(v, list) and len(v) == 2 and all(_num(x) for x in v)):
+        return "expected [low, high]"
+    return None if 0 <= v[0] <= v[1] <= 1 else "expected 0 <= low <= high <= 1"
+
+
+def _named_shape(v: Any, spec: dict[str, Check], what: str) -> str | None:
+    return None if isinstance(v, dict) and not _shape(v, spec) else f"bad {what}"
+
+
 STATS_VALIDATION = {
     "split": one_of("test"), "n_test_landslide": is_int, "n_test_forest": is_int,
     "detection_rate": is_num, "false_alarm_rate": is_num, "auc": is_num, "threshold_db": is_num,
     "by_size": list_of(lambda x: None if isinstance(x, dict) and not _shape(x, STATS_BY_SIZE) else "bad by_size item"),
+    "recall": is_num, "precision": is_num_or_null, "f1": is_num_or_null,
+    "confusion": lambda v: _named_shape(v, STATS_CONFUSION, "confusion matrix"),
+    "recall_ci_95": _ci_or_null, "precision_ci_95": _ci_or_null, "auc_ci_95": _ci_or_null,
+    "precision_recall_curve": lambda v: None if v is None else list_of(
+        lambda x: None if isinstance(x, dict) and not _shape(x, STATS_PR_POINT) else "bad curve point")(v),
 }
 STATS = {
     "mock": is_bool, "landslides": is_int, "area_km2": is_num, "roads_blocked_km": is_num_or_null,

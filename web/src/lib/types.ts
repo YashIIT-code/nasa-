@@ -7,6 +7,8 @@ export type PairId = 't141d' | 't4a' | 't40d' | 't76a';
 export type Direction = 'ascending' | 'descending';
 export type Confidence = 'high' | 'medium' | 'low';
 export type RoadStatus = 'blocked' | 'at_risk' | 'clear' | 'unknown';
+export type RoadImpact = 'high_priority' | 'potentially_affected' | 'low_confidence' | 'no_evidence' | 'unknown';
+export type AlternativeRoute = 'yes' | 'no' | 'unknown';
 export type CommunityStatus = 'cut_off' | 'reachable' | 'unknown';
 
 /** [longitude, latitude] in WGS84 (EPSG:4326). */
@@ -130,9 +132,16 @@ export interface RoadProps {
   min_distance_m: number | null;
   /** comma-separated ids within 100 m */
   landslide_ids: string;
+  /** confidence-aware impact that folds in the nearest candidate's confidence */
+  impact: RoadImpact;
+  /** the sentence shown in the app for this classification */
+  evidence: string;
+  /** comma-separated sensitivity scenarios this stretch counts as affected in */
+  scenarios: string;
 }
 export const ROAD_KEYS: Record<keyof RoadProps, true> = {
   osm_id: true, name: true, highway: true, status: true, min_distance_m: true, landslide_ids: true,
+  impact: true, evidence: true, scenarios: true,
 };
 export type Roads = FeatureCollection<LineGeometry, RoadProps>;
 
@@ -146,9 +155,16 @@ export interface CommunityProps {
   status: CommunityStatus;
   nearest_hub: string | null;
   reason: string;
+  /** evidence strength for the status */
+  confidence: Confidence;
+  /** is there an open route to a hub? */
+  alternative_route: AlternativeRoute;
+  /** the likely-blocked road name(s) that separate it from a hub */
+  crossing: string;
 }
 export const COMMUNITY_KEYS: Record<keyof CommunityProps, true> = {
   osm_id: true, name: true, place: true, population: true, status: true, nearest_hub: true, reason: true,
+  confidence: true, alternative_route: true, crossing: true,
 };
 export type Communities = FeatureCollection<PointGeometry, CommunityProps>;
 
@@ -171,21 +187,53 @@ export interface SizeDetection {
   detection_rate: number;
 }
 export const SIZE_DETECTION_KEYS: Record<keyof SizeDetection, true> = { size: true, n: true, detection_rate: true };
+/** 2x2 table of the held-out points at the operating point (polygon within 20 m). */
+export interface Confusion {
+  tp: number;
+  fp: number;
+  fn: number;
+  tn: number;
+}
+export const CONFUSION_KEYS: Record<keyof Confusion, true> = { tp: true, fp: true, fn: true, tn: true };
+/** One point of the precision-recall curve: the drop threshold and the precision/recall it gives. */
+export interface CurvePoint {
+  drop_db: number;
+  flagged: number;
+  precision: number;
+  recall: number;
+}
+export const CURVE_POINT_KEYS: Record<keyof CurvePoint, true> = { drop_db: true, flagged: true, precision: true, recall: true };
+/** [low, high] 95% interval, or null when it needs raw per-point scores that were not stored. */
+export type Interval = [number, number];
 export interface ValidationStats {
   split: 'test';
   n_test_landslide: number;
   n_test_forest: number;
-  /** 0-1 */
+  /** 0-1; this is the recall */
   detection_rate: number;
-  /** 0-1 */
+  /** 0-1; per-point false-positive rate */
   false_alarm_rate: number;
   auc: number;
   threshold_db: number;
   by_size: SizeDetection[];
+  /** 0-1; same value as detection_rate, named for the standard metric set */
+  recall: number;
+  /** 0-1, or null when nothing was predicted positive */
+  precision: number | null;
+  /** 0-1, or null when precision is null */
+  f1: number | null;
+  confusion: Confusion;
+  recall_ci_95: Interval;
+  precision_ci_95: Interval | null;
+  /** null when the stored result predates this metric block */
+  auc_ci_95: Interval | null;
+  /** null when the stored result predates this metric block */
+  precision_recall_curve: CurvePoint[] | null;
 }
 export const VALIDATION_KEYS: Record<keyof ValidationStats, true> = {
   split: true, n_test_landslide: true, n_test_forest: true, detection_rate: true, false_alarm_rate: true,
-  auc: true, threshold_db: true, by_size: true,
+  auc: true, threshold_db: true, by_size: true, recall: true, precision: true, f1: true, confusion: true,
+  recall_ci_95: true, precision_ci_95: true, auc_ci_95: true, precision_recall_curve: true,
 };
 export interface Stats {
   mock: boolean;

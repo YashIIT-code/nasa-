@@ -31,7 +31,10 @@ export function popupContent(p: Picked): { title: string; lines: string[] } {
       const lines = [
         ...(r.highway ? [fill(S.road.type, { highway: r.highway })] : []),
         S.status[r.status],
+        fill(S.road.impact, { impact: S.impactLabels[r.impact] }),
+        r.evidence,
         ...(r.min_distance_m !== null ? [fill(S.road.nearest, { distance: fmtNumber(r.min_distance_m, 0) })] : []),
+        ...(r.scenarios ? [fill(S.road.scenarios, { scenarios: r.scenarios.split(',').join(', ') })] : []),
         ...(r.landslide_ids ? [fill(S.road.ids, { ids: r.landslide_ids.split(',').join(', ') })] : []),
       ];
       return { title: r.name ?? S.road.unnamed, lines };
@@ -45,6 +48,9 @@ export function popupContent(p: Picked): { title: string; lines: string[] } {
           S.status[c.status],
           c.reason,
           ...(c.nearest_hub ? [fill(S.community.hub, { hub: c.nearest_hub })] : []),
+          ...(c.crossing ? [fill(S.community.crossing, { crossing: c.crossing.split(',').join(', ') })] : []),
+          fill(S.community.route, { route: S.routeLabels[c.alternative_route] }),
+          fill(S.community.confidence, { confidence: S.confidenceLabels[c.confidence] }),
         ],
       };
     }

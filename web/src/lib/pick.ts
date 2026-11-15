@@ -1,11 +1,25 @@
 // Turns the properties MapLibre returns for a clicked feature into the typed objects the app uses.
 // MapLibre may drop null properties, so missing values are read as null.
 import type { Picked } from './AppState.tsx';
-import type { CommunityProps, LandslideProps, RoadProps } from './types.ts';
+import type {
+  AlternativeRoute, CommunityProps, Confidence, LandslideProps, RoadImpact, RoadProps,
+} from './types.ts';
 
 type Raw = Record<string, unknown>;
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+/** A required text field that MapLibre may drop: the file contract says it is a string, so an empty one is used. */
+const text = (v: unknown): string => (typeof v === 'string' ? v : '');
+
+// The allowed values come from the file contract (types.ts), so a value the contract does not define can never
+// reach the app. Where the contract has an "unknown" member that is the fallback; confidence has none, so the
+// weakest claim ("low") is used rather than inventing strength.
+const ROAD_IMPACTS: readonly RoadImpact[] = ['high_priority', 'potentially_affected', 'low_confidence', 'no_evidence', 'unknown'];
+const CONFIDENCES: readonly Confidence[] = ['high', 'medium', 'low'];
+const ROUTES: readonly AlternativeRoute[] = ['yes', 'no', 'unknown'];
+
+const oneOf = <T extends string>(v: unknown, allowed: readonly T[], fallback: T): T =>
+  typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
 
 export const LAYER_KIND: Record<string, Picked['kind']> = {
   landslides: 'landslide',
@@ -31,7 +45,9 @@ export function toPicked(layerId: string, p: Raw, lngLat: [number, number]): Pic
         kind: 'road', lngLat,
         props: {
           osm_id: str(p.osm_id), name: str(p.name), highway: str(p.highway), status: p.status as RoadProps['status'],
-          min_distance_m: num(p.min_distance_m), landslide_ids: str(p.landslide_ids) ?? '',
+          min_distance_m: num(p.min_distance_m), landslide_ids: text(p.landslide_ids),
+          impact: oneOf(p.impact, ROAD_IMPACTS, 'unknown'),
+          evidence: text(p.evidence), scenarios: text(p.scenarios),
         },
       };
     case 'community':
@@ -40,6 +56,9 @@ export function toPicked(layerId: string, p: Raw, lngLat: [number, number]): Pic
         props: {
           osm_id: str(p.osm_id), name: String(p.name ?? ''), place: String(p.place ?? ''), population: num(p.population),
           status: p.status as CommunityProps['status'], nearest_hub: str(p.nearest_hub), reason: String(p.reason ?? ''),
+          confidence: oneOf(p.confidence, CONFIDENCES, 'low'),
+          alternative_route: oneOf(p.alternative_route, ROUTES, 'unknown'),
+          crossing: text(p.crossing),
         },
       };
     default:

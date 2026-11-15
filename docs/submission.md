@@ -32,7 +32,7 @@ Every dataset, library, font, tool, text source and its licence is in `docs/cita
 
 ## Checklist before pressing "Submit for Judging"
 - [ ] Submission closes Sunday 15 November, 11:59 p.m. local time of your Local Event. Only the last saved submission is judged.
-- [ ] Demo: a 7-slide deck or a video of 30 seconds or less, in English (a video in another language needs English subtitles), uploaded to a service such as YouTube, Google Drive or GitHub with public access and no login. Open the link in a private window to test it. Slides or video need the team name, member names and the challenge name. No images, video or audio of anyone under 18.
+- [ ] Demo: a 7-slide deck or a video of 30 seconds or less, in English (a video in another language needs English subtitles), uploaded to a service such as YouTube, Google Drive or GitHub with public access and no login. Open the link in a private window to test it. Slides or video need the team name, member names and the challenge name. No images, video or audio of anyone under 18. Talking points, the 3-minute demo script and the ten judge questions with answers are in `docs/demo.md`.
 - [ ] Final project link works without login (open the live website in a private window; check the numbers at the top match `stats.json`).
 - [ ] All required fields filled in, in English. Paste the sections above. Add the References from `docs/citations.md`.
 - [ ] Every team member is registered for the same Local Event (or the Universal Event) and is on the Members tab.

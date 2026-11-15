@@ -8,7 +8,7 @@ Live app: https://cut-off.bhogesara-ram23.workers.dev · API (optional): https:/
 
 Clouds and dense forest make landslides hard to see from optical satellites. We compared NISAR radar images from before and after the earthquake and looked for forested slopes where the radar signal dropped. Radar can collect images through cloud and at night. This analysis looks for changes in the radar signal over forested slopes. Vegetation, soil moisture, viewing geometry and other factors also change the signal, so a change is a lead, not a confirmed landslide.
 
-The candidate landslides are joined to the OpenStreetMap road network to show which roads are likely blocked and which communities are possibly cut off. Nobody saw the blockages: "likely blocked" is inferred from a candidate landslide lying next to a road. The website shows this on a map with a before/after swipe of radar and optical (Sentinel-2) images, lists the communities by status, and puts the accuracy check next to the headline numbers. A small read-only API serves the same result files. The radar data are PROVISIONAL. This is a research demo, not an official warning.
+The candidate landslides are joined to the OpenStreetMap road network to show which roads are likely blocked and which communities are possibly cut off. Nobody saw the blockages: "likely blocked" is inferred from a candidate landslide lying next to a road. The website shows this on a map with a before/after swipe of radar and optical (Sentinel-2) images, lists the communities by status, and puts the accuracy check next to the headline numbers. Each road also gets a confidence-aware assessment (whether a single-pass or repeat-pass candidate is involved, and which sensitivity scenario it falls in), and the site orders road stretches and communities into an inspection worklist with an explainable score. A small read-only API serves the same result files. The radar data are PROVISIONAL. This is a research demo, not an official warning.
 
 ## Results
 
@@ -31,8 +31,9 @@ All results come from radar processed in advance. This is a research demo, not a
 1. **Radar change.** The cross-polarised signal (HV) is compared before and after the quake, in dB, on a 20 m grid.
 2. **Local reference.** Each pair's own local mean change (a 220 m window) is subtracted, so region-wide shifts such as wetter soil are not counted.
 3. **Several passes.** Pixels must be flagged by two of up to four before/after pairs where two can see them. Patches under 3 pixels are dropped; each remaining connected patch is one candidate landslide. Slopes the radar cannot see (shadow and layover) are marked unknown.
-4. **Roads.** Candidates are joined to the OpenStreetMap road network: a road is "likely blocked" if a candidate touches it, "at risk" within 100 m.
-5. **Communities.** A community is "possibly cut off" if every mapped road from it to a nearby town crosses a likely-blocked road.
+4. **Roads.** Candidates are joined to the OpenStreetMap road network: a road is "likely blocked" if a candidate touches it, "at risk" within 100 m. Each piece also gets a confidence-aware assessment that folds in the nearest candidate's confidence and the sensitivity scenario it falls in.
+5. **Communities.** A community is "possibly cut off" if every mapped road from it to a nearby town crosses a likely-blocked road. It records whether an alternative route stays open, which likely-blocked road separates it, and a confidence for the call.
+6. **Inspection priorities.** Road stretches and communities are ordered into a worklist by an explainable, configurable score. The score is not a probability of a disaster.
 
 All processing runs offline and writes small files; the website and the API only read them. The full method, with every parameter, the nine granule IDs and every setting that was tried, is in [docs/method.md](docs/method.md).
 
@@ -42,7 +43,7 @@ All processing runs offline and writes small files; the website and the API only
 
 This is a random split of points within one study area, labelled from optical imagery and checked by eye. It is not independent geographic validation and not field validation; nearby points may share conditions.
 
-The held-out half was scored twice: first on the original method, then after the method was revised using the tuning half only. Both results are shown in the Results section and in `data/validation/`. The two AUC values use different scoring rules; on the primary pair alone the revised method gives 0.71 (`auc_primary_pair_only` in `data/validation/scoring_2_revised_method.json`). We also ran the same method on two passes from before the quake (the pre-event baseline: ordinary change between two passes before the quake, 20 Sep to 2 Oct 2026; rain, soil moisture, farming and vegetation can change over 12 days). A poor result is reported as it is.
+The held-out half was scored twice: first on the original method, then after the method was revised using the tuning half only. Both results are shown in the Results section and in `data/validation/`. The two AUC values use different scoring rules; on the primary pair alone the revised method gives 0.71 (`auc_primary_pair_only` in `data/validation/scoring_2_revised_method.json`). We also ran the same method on two passes from before the quake (the pre-event baseline: ordinary change between two passes before the quake, 20 Sep to 2 Oct 2026; rain, soil moisture, farming and vegetation can change over 12 days). A poor result is reported as it is. Alongside the detection rate, false-alarm rate and AUC, the held-out result also reports precision, recall, F1, the confusion table, Wilson 95% intervals for the rates and a bootstrap interval for the AUC.
 
 ## Limits
 
