@@ -1,0 +1,30 @@
+# dependencies and build output
+node_modules/
+dist/
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# local data (large, never committed)
+data/raw/
+data/work/
+*.tif
+
+api/data/
+
+# local configuration and credentials
+.env
+.env.*
+!.env.example
+.netrc
+pipeline/config.json
+
+# editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# archives
+*.zip

@@ -1,0 +1,48 @@
+{
+  "event_id": "panama-2026",
+  "name": "Panama M7.7 earthquake",
+  "time_utc": "2026-10-09T17:56:00Z",
+  "epicentre": [
+    -80.769,
+    7.587
+  ],
+  "bbox": [
+    -81.0,
+    7.3,
+    -80.3,
+    8.0
+  ],
+  "maturity": "PROVISIONAL",
+  "mock": false,
+  "optical": {
+    "before_webp": "s2_before.webp",
+    "after_webp": "s2_after.webp",
+    "bounds": [
+      [
+        -81.0,
+        8.0
+      ],
+      [
+        -80.3,
+        8.0
+      ],
+      [
+        -80.3,
+        7.3
+      ],
+      [
+        -81.0,
+        7.3
+      ]
+    ],
+    "before_caption": "Sentinel-2 before: cloud-masked composite of 8 and 22 Sep 2026. Gaps are cloud.",
+    "after_caption": "Sentinel-2 after: cloud-masked composite of 18 and 28 Oct 2026. Gaps are cloud.",
+    "attribution": "Contains modified Copernicus Sentinel data 2026, processed by the team"
+  },
+  "references": [
+    {
+      "label": "Copernicus EMS EMSR934",
+      "url": "https://mapping.emergency.copernicus.eu/news/earthquake-in-los-santos-panama-emsr934/"
+    }
+  ]
+}
